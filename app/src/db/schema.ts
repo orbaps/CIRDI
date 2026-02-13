@@ -35,6 +35,7 @@ export const devices = pgTable("devices", {
   deviceType: varchar("device_type", { length: 50 }).default("unknown").notNull(),
   vendor: varchar("vendor", { length: 255 }),
   status: varchar("status", { length: 50 }).default("online").notNull(),
+  discoveryMethod: varchar("discovery_method", { length: 50 }),
   firstSeen: timestamp("first_seen", { withTimezone: true }).defaultNow().notNull(),
   lastSeen: timestamp("last_seen", { withTimezone: true }).defaultNow().notNull(),
   location: varchar("location", { length: 255 }),

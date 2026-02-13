@@ -1,0 +1,207 @@
+version: '3.9'
+
+services:
+  # Reverse Proxy
+  traefik:
+    image: traefik:v2.10
+    container_name: cirdi-traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080" # Dashboard
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - cirdi-network
+
+  # TimescaleDB (Time-series data)
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    container_name: cirdi-timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: cirdi
+      POSTGRES_DB: cirdi
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescaledb-data:/var/lib/postgresql/data
+      - ../infrastructure/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - cirdi-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cirdi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis (Cache & Sessions)
+  redis:
+    image: redis:7.2-alpine
+    container_name: cirdi-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - cirdi-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Prometheus (Metrics Collection)
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: cirdi-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - cirdi-network
+    depends_on:
+      - snmp-exporter
+      - node-exporter
+      - blackbox-exporter
+
+  # SNMP Exporter
+  snmp-exporter:
+    image: prom/snmp-exporter:v0.24.0
+    container_name: cirdi-snmp-exporter
+    restart: unless-stopped
+    volumes:
+      - ./snmp_exporter/snmp.yml:/etc/snmp_exporter/snmp.yml:ro
+    ports:
+      - "9116:9116"
+    networks:
+      - cirdi-network
+    command:
+      - '--config.file=/etc/snmp_exporter/snmp.yml'
+
+  # SNMP Simulator (Simulates a router)
+  snmp-sim:
+    image: tandrup/snmpsim
+    container_name: cirdi-snmp-sim
+    restart: unless-stopped
+    volumes:
+      - ./snmp_sim_data:/usr/share/snmpsim/data
+    ports:
+      - "161:161/udp"
+    command:
+      - "--process-user=snmpsim"
+      - "--process-group=snmpsim"
+      - "--agent-udpv4-endpoint=0.0.0.0:161"
+    networks:
+      - cirdi-network
+
+  # Node Exporter (Server Metrics)
+  node-exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: cirdi-node-exporter
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - cirdi-network
+
+  # Blackbox Exporter (Uptime Monitoring)
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.24.0
+    container_name: cirdi-blackbox-exporter
+    restart: unless-stopped
+    ports:
+      - "9115:9115"
+    networks:
+      - cirdi-network
+
+  # Alertmanager
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: cirdi-alertmanager
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - alertmanager-data:/alertmanager
+    networks:
+      - cirdi-network
+
+  # Mailpit (Email Testing)
+  mailpit:
+    image: axllent/mailpit
+    container_name: cirdi-mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # Web UI
+    networks:
+      - cirdi-network
+
+  # Suricata (IDS)
+  suricata:
+    image: jasonish/suricata:7.0
+    container_name: cirdi-suricata
+    restart: unless-stopped
+    network_mode: "host"  # Required for packet capture
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_NICE
+    volumes:
+      - ./suricata/suricata.yaml:/etc/suricata/suricata.yaml:ro
+      - suricata-logs:/var/log/suricata
+    # Only if interface eth0 exists, otherwise adjust command
+    # command: -c /etc/suricata/suricata.yaml -i eth0
+
+  # CrowdSec (Threat Intelligence)
+  crowdsec:
+    image: crowdsecurity/crowdsec:latest
+    container_name: cirdi-crowdsec
+    restart: unless-stopped
+    environment:
+      - COLLECTIONS=crowdsecurity/linux crowdsecurity/sshd
+    volumes:
+      - ./crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml:ro
+      - crowdsec-db:/var/lib/crowdsec/data
+      - crowdsec-config:/etc/crowdsec
+      - suricata-logs:/var/log/suricata:ro
+    networks:
+      - cirdi-network
+
+networks:
+  cirdi-network:
+    driver: bridge
+
+volumes:
+  timescaledb-data:
+  redis-data:
+  prometheus-data:
+  alertmanager-data:
+  suricata-logs:
+  crowdsec-db:
+  crowdsec-config:

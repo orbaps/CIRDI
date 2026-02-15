@@ -1,0 +1,20 @@
+groups:
+  - name: cirdi_alerts
+    rules:
+      - alert: HighBandwidthUsage
+        expr: (rate(ifInOctets[1m]) * 8) > 80000000  # > 80 Mbps (assuming 100Mbps link)
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High bandwidth usage on {{ $labels.instance }}"
+          description: "Interface {{ $labels.ifDescr }} is using {{ $value | humanize }}bps"
+
+      - alert: DeviceDown
+        expr: up{job="snmp"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Device {{ $labels.instance }} is down"
+          description: "SNMP scrape failed for 2 minutes"

@@ -46,6 +46,8 @@ export const devices = pgTable("devices", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+import { relations } from "drizzle-orm";
+
 export const alerts = pgTable("alerts", {
   id: uuid("id").defaultRandom().primaryKey(),
   type: varchar("type", { length: 50 }).notNull(),
@@ -98,3 +100,10 @@ export const securityEvents = pgTable("security_events", {
     idxSeverity: index("idx_security_severity").on(table.alertSeverity, table.time),
   };
 });
+
+export const alertsRelations = relations(alerts, ({ one }) => ({
+  device: one(devices, {
+    fields: [alerts.deviceId],
+    references: [devices.id],
+  }),
+}));

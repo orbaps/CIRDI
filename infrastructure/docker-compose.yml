@@ -193,6 +193,46 @@ services:
     networks:
       - cirdi-network
 
+  # Next.js Application
+  app:
+    build:
+      context: ../app
+      dockerfile: Dockerfile
+    container_name: cirdi-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://cirdi:password@cirdi-timescaledb:5432/cirdi
+      - PROMETHEUS_URL=http://cirdi-prometheus:9090
+      - NEXTAUTH_SECRET=changeme
+      - NEXTAUTH_URL=http://localhost:3000
+    depends_on:
+      - timescaledb
+      - prometheus
+    networks:
+      - cirdi-network
+
+  # Background Worker
+  worker:
+    build:
+      context: ../app
+      dockerfile: Dockerfile
+    container_name: cirdi-worker
+    restart: unless-stopped
+    command: npm run worker
+    environment:
+      - DATABASE_URL=postgresql://cirdi:password@cirdi-timescaledb:5432/cirdi
+      - PROMETHEUS_URL=http://cirdi-prometheus:9090
+    volumes:
+      - ../app:/app
+      - /app/node_modules
+    depends_on:
+      - timescaledb
+      - prometheus
+    networks:
+      - cirdi-network
+
 networks:
   cirdi-network:
     driver: bridge
